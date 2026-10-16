@@ -1225,7 +1225,7 @@ dependencies = [
 [[package]]
 name = "craft-font-info"
 version = "0.1.0"
-source = "git+https://github.com/Arecsu/craft-libs?rev=54c03b4e417e9e23aa4593506b687f9d5a5624a2#54c03b4e417e9e23aa4593506b687f9d5a5624a2"
+source = "git+https://github.com/Arecsu/craft-libs?rev=786fe7101c924594b048fd897498d4d07a726ae6#786fe7101c924594b048fd897498d4d07a726ae6"
 dependencies = [
  "skrifa",
 ]

@@ -273,43 +273,12 @@ fn feature_preview(c: &CharStyle, tag: &str, d: &FaceDetails) -> Preview {
     }
 }
 
-/// Registered names of features outside the fixed rows (raw tag when unknown).
+/// A feature's name in the interface language: Photoshop's Type › OpenType label for the features
+/// that menu has (the Character panel's buttons, [`crate::type_tool::OPENTYPE_BUTTONS`]), else its
+/// registered name (`photocraft_text::FEATURE_NAMES`), else its tag.
 fn feature_label(tag: &str) -> String {
-    let s = match tag {
-        "smcp" => tl!("Small capitals"),
-        "c2sc" => tl!("Capitals to small capitals"),
-        "pcap" => tl!("Petite capitals"),
-        "c2pc" => tl!("Capitals to petite capitals"),
-        "unic" => tl!("Unicase"),
-        "dnom" => tl!("Denominators"),
-        "numr" => tl!("Numerators"),
-        "sinf" => tl!("Scientific inferiors"),
-        "hist" => tl!("Historical forms"),
-        "hlig" => tl!("Historical ligatures"),
-        "ornm" => tl!("Ornaments"),
-        "nalt" => tl!("Alternate annotation forms"),
-        "mgrk" => tl!("Mathematical Greek"),
-        "lnum" => tl!("Lining figures"),
-        "onum" => tl!("Oldstyle figures"),
-        "pnum" => tl!("Proportional figures"),
-        "tnum" => tl!("Tabular figures"),
-        "afrc" => tl!("Alternative fractions"),
-        "cswh" => tl!("Contextual swash"),
-        "jalt" => tl!("Justification alternates"),
-        "ital" => tl!("Italics"),
-        "rtbd" => tl!("Right bounds"),
-        "lfbd" => tl!("Left bounds"),
-        "opbd" => tl!("Optical bounds"),
-        "palt" | "halt" => tl!("Proportional alternate widths"),
-        "pwid" => tl!("Proportional widths"),
-        "fwid" => tl!("Full widths"),
-        "hwid" => tl!("Half widths"),
-        "ruby" => tl!("Ruby notation forms"),
-        "expt" => tl!("Expert forms"),
-        "jp78" | "jp83" | "jp90" | "jp04" | "smpl" | "trad" | "tnam" => tl!("Alternate CJK forms"),
-        _ => return tag.to_string(),
-    };
-    s.to_string()
+    let menu = crate::type_tool::OPENTYPE_BUTTONS.iter().find(|(t, ..)| *t == tag).map(|(_, _, label)| *label);
+    menu.or_else(|| photocraft_text::feature_name(tag)).map_or_else(|| tag.to_string(), |name| crate::i18n::t(name).to_string())
 }
 
 /// A row: its label on the left (wrapping), the control's rect on the right. Returns (row rect,
@@ -397,14 +366,27 @@ fn tip_adds(caption: &str, tip: &str) -> bool {
     !tip.is_empty() && !tip.to_lowercase().contains(&caption.to_lowercase())
 }
 
+/// A [`feature_row`] labelled with the feature's registered name ([`feature_label`]).
+fn registered_row(ui: &mut egui::Ui, c: &CharStyle, d: &FaceDetails, tag: &str, hover: &mut Option<Preview>, change: &mut Option<Value>) {
+    feature_row(ui, c, d, tag, &feature_label(tag), hover, change);
+}
+
 /// A feature row with Figma's [— | ✓] switch; disabled (greyed) when the face lacks it.
 fn feature_row(ui: &mut egui::Ui, c: &CharStyle, d: &FaceDetails, tag: &str, label: &str, hover: &mut Option<Preview>, change: &mut Option<Value>) {
     let enabled = d.has_feature(tag);
     let (row, control) = row_rects(ui, label, TOGGLE_W, enabled);
     let on = feature_shown_on(c, tag);
     let tips = [format!("{label}: {}", tl!("Off")), format!("{label}: {}", tl!("On"))];
-    let (clicked, _) =
-        segments(ui, egui::Id::new(("type-details-feature", tag)), control, &["—".into(), "✓".into()], &tips, Some(usize::from(on)), &[enabled, enabled], false);
+    let (clicked, _) = segments(
+        ui,
+        egui::Id::new(("type-details-feature", tag)),
+        control,
+        &["—".into(), "✓".into()],
+        &tips,
+        Some(usize::from(on)),
+        &[enabled, enabled],
+        false,
+    );
     if let Some(i) = clicked {
         *change = Some(feature_props(tag, i == 1));
     }
@@ -450,26 +432,27 @@ fn choice_row(ui: &mut egui::Ui, id: &str, label: &str, text: &str, choices: Vec
 
 /// Options that each turn on one feature of a set and off the others (figure style, figure
 /// position): `options` are (tag, caption, tooltip); the first choice is "none of them".
-fn exclusive(c: &CharStyle, d: &FaceDetails, none_tip: &str, options: &[(&str, &str, &str)]) -> Vec<Choice> {
+/// `options`: (feature tag, caption); each tip is the feature's name.
+fn exclusive(c: &CharStyle, d: &FaceDetails, none_tip: &str, options: &[(&str, &str)]) -> Vec<Choice> {
     let mut clear = c.clone();
-    clear.features.retain(|f| !options.iter().any(|(t, _, _)| *t == f.tag));
-    let none_props: serde_json::Map<String, Value> = options.iter().map(|(t, _, _)| (t.to_string(), Value::Null)).collect();
+    clear.features.retain(|f| !options.iter().any(|(t, _)| *t == f.tag));
+    let none_props: serde_json::Map<String, Value> = options.iter().map(|(t, _)| (t.to_string(), Value::Null)).collect();
     let mut v = vec![Choice {
         caption: "—".into(),
         tip: none_tip.into(),
         style: clear.clone(),
         props: json!({ "features": none_props }),
         available: true,
-        selected: !options.iter().any(|(t, _, _)| feature_shown_on(c, t)),
+        selected: !options.iter().any(|(t, _)| feature_shown_on(c, t)),
     }];
-    for (tag, caption, tip) in options {
+    for (tag, caption) in options {
         let mut props = none_props.clone();
         props.insert(tag.to_string(), json!(1));
         let mut style = clear.clone();
         style.features.push(FontFeature { tag: tag.to_string(), value: 1 });
         v.push(Choice {
             caption: caption.to_string(),
-            tip: tip.to_string(),
+            tip: feature_label(tag),
             style,
             props: json!({ "features": props }),
             available: d.has_feature(tag),
@@ -518,32 +501,30 @@ fn details_tab(ui: &mut egui::Ui, c: &CharStyle, d: &FaceDetails, hover: &mut Op
         },
     ];
     choice_row(ui, "case", tl!("Case"), "Typography Details", case, hover, change);
-    feature_row(ui, c, d, "case", tl!("Case-sensitive forms"), hover, change);
-    feature_row(ui, c, d, "cpsp", tl!("Capital spacing"), hover, change);
+    registered_row(ui, c, d, "case", hover, change);
+    registered_row(ui, c, d, "cpsp", hover, change);
 
     heading(ui, tl!("Numbers"));
     let nums = "$1,111.18 90.7% 2026";
-    let style =
-        exclusive(c, d, tl!("Default"), &[("pnum", tl!("Proportional"), tl!("Proportional figures")), ("tnum", tl!("Tabular"), tl!("Tabular figures"))]);
+    let style = exclusive(c, d, tl!("Default"), &[("pnum", tl!("Proportional")), ("tnum", tl!("Tabular"))]);
     choice_row(ui, "num-style", tl!("Figure spacing"), nums, style, hover, change);
-    let forms = exclusive(c, d, tl!("Default"), &[("lnum", tl!("Lining"), tl!("Lining figures")), ("onum", tl!("Oldstyle"), tl!("Oldstyle figures"))]);
+    let forms = exclusive(c, d, tl!("Default"), &[("lnum", tl!("Lining")), ("onum", tl!("Oldstyle"))]);
     choice_row(ui, "num-form", tl!("Figure style"), nums, forms, hover, change);
-    let pos =
-        exclusive(c, d, tl!("Normal"), &[("subs", "A₂", tl!("Subscript")), ("sups", "A²", tl!("Superscript")), ("sinf", "A₍", tl!("Scientific inferiors"))]);
+    let pos = exclusive(c, d, tl!("Normal"), &[("subs", "A₂"), ("sups", "A²"), ("sinf", "A₍")]);
     choice_row(ui, "num-pos", tl!("Position"), "x2 H2O 10-3", pos, hover, change);
-    feature_row(ui, c, d, "frac", tl!("Fractions"), hover, change);
-    feature_row(ui, c, d, "zero", tl!("Slashed zero"), hover, change);
+    registered_row(ui, c, d, "frac", hover, change);
+    registered_row(ui, c, d, "zero", hover, change);
 
     heading(ui, tl!("Letterforms"));
-    feature_row(ui, c, d, "liga", tl!("Standard Ligatures"), hover, change);
-    feature_row(ui, c, d, "dlig", tl!("Discretionary Ligatures"), hover, change);
-    feature_row(ui, c, d, "calt", tl!("Contextual Alternates"), hover, change);
-    feature_row(ui, c, d, "swsh", tl!("Swash"), hover, change);
-    feature_row(ui, c, d, "titl", tl!("Titling Alternates"), hover, change);
-    feature_row(ui, c, d, "ordn", tl!("Ordinals"), hover, change);
+    registered_row(ui, c, d, "liga", hover, change);
+    registered_row(ui, c, d, "dlig", hover, change);
+    registered_row(ui, c, d, "calt", hover, change);
+    registered_row(ui, c, d, "swsh", hover, change);
+    registered_row(ui, c, d, "titl", hover, change);
+    registered_row(ui, c, d, "ordn", hover, change);
 
     heading(ui, tl!("Stylistic sets"));
-    feature_row(ui, c, d, "salt", tl!("Stylistic Alternates"), hover, change);
+    registered_row(ui, c, d, "salt", hover, change);
     for n in 1..=20 {
         let tag = format!("ss{n:02}");
         if let Some(f) = d.feature(&tag) {
@@ -561,7 +542,7 @@ fn details_tab(ui: &mut egui::Ui, c: &CharStyle, d: &FaceDetails, hover: &mut Op
     }
 
     heading(ui, tl!("Horizontal spacing"));
-    feature_row(ui, c, d, "kern", tl!("Kerning pairs"), hover, change);
+    registered_row(ui, c, d, "kern", hover, change);
 
     const SHOWN: &[&str] = &[
         "case", "cpsp", "pnum", "tnum", "lnum", "onum", "subs", "sups", "sinf", "frac", "zero", "liga", "dlig", "calt", "swsh", "titl", "ordn", "salt", "kern",
@@ -731,8 +712,14 @@ fn instance_row(ui: &mut egui::Ui, c: &CharStyle, d: &FaceDetails, hover: &mut O
                 for (tag, v) in inst.coords.iter().filter(|(tag, _)| tag != "opsz") {
                     s = with_axis(&s, tag, *v);
                 }
-                *hover =
-                    Some(Preview { text: AXIS_SAMPLE.into(), samples: vec![(String::new(), c.clone()), (inst.name.clone(), s)], across: true, wrap: false, trim: false, changed: None });
+                *hover = Some(Preview {
+                    text: AXIS_SAMPLE.into(),
+                    samples: vec![(String::new(), c.clone()), (inst.name.clone(), s)],
+                    across: true,
+                    wrap: false,
+                    trim: false,
+                    changed: None,
+                });
             }
         });
     });
@@ -954,7 +941,13 @@ const FILL: f32 = 0.62;
 
 /// Lays `text` out in `style` as large as fits a `slot` (pixels), up to a size that fills the
 /// slot's height, wrapped to its width when `wrap`: (layout, drawn bounds, size).
-fn fit(engine: &mut photocraft_text::TextEngine, text: &str, style: &CharStyle, slot: [u32; 2], wrap: bool) -> Option<(photocraft_text::TextLayout, [f32; 4], f32)> {
+fn fit(
+    engine: &mut photocraft_text::TextEngine,
+    text: &str,
+    style: &CharStyle,
+    slot: [u32; 2],
+    wrap: bool,
+) -> Option<(photocraft_text::TextLayout, [f32; 4], f32)> {
     let [w, h] = slot;
     if text.is_empty() || w < 4 || h < 4 || w > 4096 || h > 4096 {
         return None;
@@ -1038,6 +1031,19 @@ mod tests {
     use egui_kittest::Harness;
     use egui_kittest::kittest::Queryable;
     use photocraft_doc::LayerContent;
+
+    /// Feature names come from the shared table (`photocraft_text::FEATURE_NAMES`) and the OpenType
+    /// buttons, not `tl!` literals, so the literal scan can't see them: every one shown is
+    /// translated here instead.
+    #[test]
+    fn registered_feature_names_are_translated() {
+        for l in crate::i18n::LANGUAGES.iter().filter(|l| l.complete_menus) {
+            let lang = crate::i18n::Lang::from_code(l.code).unwrap();
+            let missing: Vec<_> =
+                photocraft_text::FEATURE_NAMES.iter().map(|(tag, _)| feature_label(tag)).filter(|name| !crate::i18n::has(lang, name)).collect();
+            assert!(missing.is_empty(), "{}: untranslated feature names: {missing:?}", l.code);
+        }
+    }
 
     fn app_with_type() -> (PhotocraftApp, u64) {
         // The window waits for the font scan; finish it first.
